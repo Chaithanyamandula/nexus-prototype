@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}Login{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-7 col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h3 class="card-title mb-3">Login</h3>
+        <form method="post" id="loginForm">
+          <div class="mb-3">
+            <label class="form-label">Role</label>
+            <select name="role" class="form-select" required>
+              <option value="">Select role</option>
+              <option value="student">Student</option>
+              <option value="faculty">Faculty</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Register ID / Faculty ID</label>
+            <input class="form-control" name="reg_id" required>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Password</label>
+            <input type="password" class="form-control" name="password" required>
+          </div>
+
+          <!-- Webcam feed -->
+          <div class="mb-3 text-center">
+            <video id="video" autoplay playsinline width="320" height="240" class="border"></video>
+            <canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
+          </div>
+
+          <!-- Hidden field to send captured image -->
+          <input type="hidden" name="face_image" id="face_image">
+
+          <div class="d-grid gap-2">
+            <button type="button" class="btn btn-secondary" id="captureBtn">Capture Face</button>
+            <button class="btn btn-primary" type="submit">Login</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Access webcam
+let video = document.getElementById('video');
+navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+  .then(stream => { video.srcObject = stream; })
+  .catch(err => { alert("Could not access webcam: " + err); });
+
+document.getElementById('captureBtn').onclick = function() {
+  let canvas = document.getElementById('canvas');
+  let ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+  let dataUrl = canvas.toDataURL('image/jpeg');
+  document.getElementById('face_image').value = dataUrl;
+  alert("Face captured successfully!");
+};
+</script>
+{% endblock %}

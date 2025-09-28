@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Student Dashboard{% endblock %}
+
+{% block content %}
+<h2>Welcome, {{ user.name }} (Student)</h2>
+<p><strong>Register ID:</strong> {{ user.reg_id }}</p>
+<p><strong>Email:</strong> {{ user.email }}</p>
+<p><strong>Mobile:</strong> {{ user.mobile }}</p>
+
+<hr>
+<h4>Scan QR to mark attendance</h4>
+<video id="scannerVideo" width="400" autoplay></video>
+<canvas id="scannerCanvas" style="display:none;"></canvas>
+<p id="scanStatus"></p>
+
+<div class="mt-4">
+  <a href="{{ url_for('logout') }}" class="btn btn-danger">Logout</a>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.socket.io/4.7.1/socket.io.min.js"></script>
+
+<script>
+const socket = io();
+const video = document.getElementById('scannerVideo');
+const canvas = document.getElementById('scannerCanvas');
+const ctx = canvas.getContext('2d');
+const scanStatus = document.getElementById('scanStatus');
+
+navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}})
+.then(stream=>{video.srcObject=stream;})
+.catch(err=>{alert("Webcam not accessible: "+err);});
+
+function scanQRCode(){
+    if(video.readyState===video.HAVE_ENOUGH_DATA){
+        canvas.width=video.videoWidth;
+        canvas.height=video.videoHeight;
+        ctx.drawImage(video,0,0,canvas.width,canvas.height);
+        const imageData = ctx.getImageData(0,0,canvas.width,canvas.height);
+        const code = jsQR(imageData.data,imageData.width,imageData.height,{inversionAttempts:"dontInvert"});
+        if(code){
+            scanStatus.innerHTML = `QR detected: ${code.data}`;
+            try{
+                const data = JSON.parse(code.data);
+                // Emit attendance to faculty room
+                socket.emit('attendance', {
+                    student_reg_id:"{{ user.reg_id }}",
+                    faculty_reg_id:data.faculty_reg_id,
+                    subject:data.subject,
+                    timestamp:new Date().toLocaleString('en-IN')
+                });
+                scanStatus.innerHTML += '<br>Attendance sent ✅';
+            }catch(err){ console.log(err); }
+        } else {
+            scanStatus.innerHTML='Scanning QR...';
+        }
+    }
+    requestAnimationFrame(scanQRCode);
+}
+requestAnimationFrame(scanQRCode);
+</script>
+{% endblock %}
