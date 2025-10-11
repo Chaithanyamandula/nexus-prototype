@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% block title %}Faculty Dashboard{% endblock %}
+
+{% block content %}
+<h2>Welcome, {{ user.name }} (Faculty)</h2>
+<p><strong>Register ID:</strong> {{ user.reg_id }}</p>
+<p><strong>Email:</strong> {{ user.email }}</p>
+<p><strong>Mobile:</strong> {{ user.mobile }}</p>
+
+<hr>
+<h4>Current Date & Time (IST): <span id="currentTime"></span></h4>
+
+<h4 class="mt-3">Today's Timetable</h4>
+<div id="timetable" class="row mt-3"></div>
+
+<h4 class="mt-4">Attendance Entries</h4>
+<table class="table table-bordered table-striped">
+    <thead class="table-dark">
+        <tr>
+            <th>Student Roll No</th>
+            <th>Student Name</th>
+            <th>Subject</th>
+            <th>Time</th>
+        </tr>
+    </thead>
+    <tbody id="attendanceTable"></tbody>
+</table>
+
+<div class="mt-4">
+  <a href="{{ url_for('logout') }}" class="btn btn-danger">Logout</a>
+</div>
+
+<!-- Face Verification Modal -->
+<div class="modal fade" id="faceVerifyModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content p-3 text-center">
+      <h5>Face Verification Required</h5>
+      <video id="video" autoplay playsinline width="320" height="240" class="border mt-2"></video>
+      <canvas id="canvas" width="320" height="240" style="display:none;"></canvas>
+      <input type="hidden" id="face_image">
+      <div class="mt-3">
+        <button class="btn btn-primary btn-sm" id="verifyFaceBtn">Verify Face & Generate QR</button>
+        <button class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+      </div>
+      <div id="faceStatus" class="mt-2"></div>
+    </div>
+  </div>
+</div>
+
+<!-- QR Modal -->
+<div class="modal fade" id="qrModal" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content p-3 text-center">
+      <h5 id="qrSubject"></h5>
+      <img id="qrImage" src="" alt="QR Code" class="img-fluid mt-2 mb-2">
+      <p id="qrInfo"></p>
+      <button class="btn btn-secondary mt-2" data-bs-dismiss="modal">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/qrcode/build/qrcode.min.js"></script>
+<script src="https://cdn.socket.io/4.7.1/socket.io.min.js"></script>
+
+<script>
+// ===== Date & Time =====
+function updateTime() {
+    document.getElementById('currentTime').innerText = new Date().toLocaleString('en-IN', {hour12:true});
+}
+setInterval(updateTime, 1000);
+updateTime();
+
+// ===== Timetable =====
+const subjects = ["Math","Physics","Chemistry","Biology","English","History","Computer Science"];
+const timetableDiv = document.getElementById('timetable');
+let selectedSubject = '';
+
+function generateRandomTimetable() {
+    const now = new Date();
+    const startHour = 9;
+    let classes=[];
+    for(let i=0;i<5;i++){
+        let start=new Date(now); start.setHours(startHour+i,0,0,0);
+        let end=new Date(start); end.setHours(end.getHours()+1);
+        let subject = subjects[Math.floor(Math.random()*subjects.length)];
+        classes.push({subject,start,end});
+    }
+    return classes;
+}
+
+function displayTimetable(classes){
+    timetableDiv.innerHTML='';
+    classes.forEach(cls=>{
+        const card = document.createElement('div');
+        card.className='col-md-4 mt-3';
+        card.innerHTML=`
+        <div class="card shadow-sm">
+            <div class="card-body text-center">
+                <h5 class="card-title">${cls.subject}</h5>
+                <p>${cls.start.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})} - 
+                   ${cls.end.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'})}</p>
+                <button class="btn btn-primary btn-sm generate-qr" data-subject="${cls.subject}">Generate QR</button>
+                <div class="qr-container mt-2"></div>
+            </div>
+        </div>`;
+        timetableDiv.appendChild(card);
+    });
+}
+
+displayTimetable(generateRandomTimetable());
+
+// ===== Socket.IO =====
+const socket = io();
+
+socket.on('connect', () => {
+  console.log('✅ Faculty socket connected:', socket.id);
+  // Join faculty-specific room using reg_id
+  const facultyRoom = "{{ user.reg_id }}";
+  socket.emit('join_room', facultyRoom);
+  console.log('📍 Joining room:', facultyRoom);
+});
+
+socket.on('disconnect', () => {
+  console.log('❌ Faculty socket disconnected');
+});
+
+socket.on('connect_error', (err) => {
+  console.error('⚠️ Faculty socket connect_error', err);
+});
+
+// Function to add attendance row to table
+function addAttendanceRow(data){
+  console.log('📊 Attendance received:', data);
+  const tbody = document.getElementById('attendanceTable');
+  if(!tbody) {
+    console.error('❌ Attendance table body not found!');
+    return;
+  }
+
+  // Create unique key to prevent duplicates
+  const key = `${data.student_reg_id}|${data.subject}|${data.timestamp}`;
+  
+  // Check if this entry already exists
+  if (tbody.querySelector(`tr[data-key="${key}"]`)) {
+    console.log('⚠️ Duplicate attendance ignored:', key);
+    return;
+  }
+
+  // Create new row
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-key', key);
+  tr.style.transition = 'background-color 0.5s';
+  tr.innerHTML = `
+    <td>${data.student_reg_id}</td>
+    <td>${data.student_name || 'N/A'}</td>
+    <td>${data.subject}</td>
+    <td>${data.timestamp}</td>
+  `;
+  
+  // Add row with green highlight animation
+  tr.style.backgroundColor = '#d4edda';
+  tbody.insertBefore(tr, tbody.firstChild);
+  console.log('✅ Row added to table');
+  
+  // Remove highlight after 3 seconds
+  setTimeout(() => {
+    tr.style.backgroundColor = '';
+  }, 3000);
+
+  // Show notification toast
+  showNotification(data);
+}
+
+// Function to show notification
+function showNotification(data) {
+  const notification = document.createElement('div');
+  notification.className = 'alert alert-success alert-dismissible fade show position-fixed';
+  notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 300px;';
+  notification.innerHTML = `
+    <strong>✅ New Attendance Marked!</strong><br>
+    <strong>${data.student_reg_id}</strong> - ${data.student_name || 'Student'}<br>
+    Subject: <strong>${data.subject}</strong><br>
+    Time: ${data.timestamp}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  `;
+  document.body.appendChild(notification);
+  
+  // Auto-remove after 5 seconds
+  setTimeout(() => {
+    if (notification.parentNode) {
+      notification.remove();
+    }
+  }, 5000);
+}
+
+// Listen to attendance events from server
+socket.on('attendance', (data) => {
+  console.log('🔔 Received attendance event:', data);
+  addAttendanceRow(data);
+});
+
+// Also listen to new_attendance for compatibility
+socket.on('new_attendance', (data) => {
+  console.log('🔔 Received new_attendance event:', data);
+  addAttendanceRow(data);
+});
+
+// ===== QR Generation =====
+timetableDiv.addEventListener('click', e=>{
+    if(e.target.classList.contains('generate-qr')){
+        selectedSubject=e.target.dataset.subject;
+        const faceModal = new bootstrap.Modal(document.getElementById('faceVerifyModal'));
+        faceModal.show();
+    }
+});
+
+// ===== Face Verification =====
+const video=document.getElementById('video');
+const canvas=document.getElementById('canvas');
+const faceInput=document.getElementById('face_image');
+const faceStatus=document.getElementById('faceStatus');
+
+navigator.mediaDevices.getUserMedia({video:true})
+.then(stream=>{video.srcObject=stream;})
+.catch(err=>{alert("Webcam not accessible: "+err);});
+
+document.getElementById('verifyFaceBtn').onclick=async()=>{
+    faceStatus.innerHTML='Verifying face...';
+    canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+    const dataUrl=canvas.toDataURL('image/jpeg');
+    faceInput.value=dataUrl;
+
+    try{
+        const resp=await fetch("{{ url_for('verify_face_for_qr') }}",{
+            method:'POST',
+            headers:{'Content-Type':'application/json'},
+            body:JSON.stringify({face_image:dataUrl, reg_id:"{{ user.reg_id }}"} )
+        });
+        const j=await resp.json();
+        if(j.success){
+            faceStatus.innerHTML='<div class="text-success">Face verified ✅</div>';
+            const qrUrl=await new Promise((resolve,reject)=>{
+                QRCode.toDataURL(JSON.stringify({subject:selectedSubject, faculty_reg_id:"{{ user.reg_id }}", time:new Date().toLocaleString('en-IN')}), {width:200}, (err,url)=>{if(err) reject(err); else resolve(url);});
+            });
+            const qrModal=new bootstrap.Modal(document.getElementById('qrModal'));
+            document.getElementById('qrSubject').innerText=selectedSubject;
+            document.getElementById('qrImage').src=qrUrl;
+            document.getElementById('qrInfo').innerText='Students can scan this QR to mark attendance';
+            qrModal.show();
+            bootstrap.Modal.getInstance(document.getElementById('faceVerifyModal')).hide();
+        }else{
+            faceStatus.innerHTML='<div class="text-danger">Face verification failed ❌</div>';
+        }
+    }catch(err){
+        faceStatus.innerHTML='<div class="text-danger">Error verifying face.</div>';
+    }
+};
+</script>
+{% endblock %}

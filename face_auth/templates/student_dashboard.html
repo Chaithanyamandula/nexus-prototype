@@ -1,0 +1,317 @@
+{% extends "base.html" %}
+{% block title %}Student Dashboard{% endblock %}
+
+{% block content %}
+<h2>Welcome, {{ user.name }} (Student)</h2>
+<p><strong>Register ID:</strong> {{ user.reg_id }}</p>
+<p><strong>Email:</strong> {{ user.email }}</p>
+<p><strong>Mobile:</strong> {{ user.mobile }}</p>
+
+<hr>
+
+<!-- QR Scanner Section -->
+<div id="qrScannerSection">
+    <h4>Scan QR to mark attendance</h4>
+    <video id="scannerVideo" width="400" autoplay muted playsinline></video>
+    <canvas id="scannerCanvas" style="display:none;"></canvas>
+    <p id="scanStatus" class="mt-2"></p>
+</div>
+
+<!-- Face Verification Section -->
+<div id="faceVerificationSection" style="display:none;">
+    <h4>Face Verification Required</h4>
+    <div class="row">
+        <div class="col-md-6">
+            <h6>Live Camera Feed</h6>
+            <video id="faceVideo" width="300" height="300" autoplay muted playsinline></video>
+            <div class="mt-2">
+                <button id="captureFaceBtn" class="btn btn-primary">
+                    <i class="fas fa-camera"></i> Capture & Verify Face
+                </button>
+                <button id="retryFaceBtn" class="btn btn-warning" style="display:none;">
+                    <i class="fas fa-redo"></i> Retry Capture
+                </button>
+            </div>
+        </div>
+        <div class="col-md-6">
+            <h6>Verification Status</h6>
+            <div id="verificationStatus" class="alert alert-info">
+                <i class="fas fa-info-circle"></i> Please position your face clearly and click "Capture & Verify Face"
+            </div>
+            <canvas id="faceCanvas" style="display:none;"></canvas>
+            <div id="capturedImage" class="mt-2"></div>
+        </div>
+    </div>
+</div>
+
+<!-- Mark Attendance Section -->
+<div id="markAttendanceSection" style="display:none;" class="mt-4">
+    <div class="alert alert-success">
+        <h5><i class="fas fa-check-circle"></i> Face Verified Successfully!</h5>
+        <p><strong>Subject:</strong> <span id="attendanceSubject"></span></p>
+        <p><strong>Faculty ID:</strong> <span id="facultyRegId"></span></p>
+        <p><strong>Student:</strong> {{ user.name }} ({{ user.reg_id }})</p>
+        <p><strong>Time:</strong> <span id="attendanceTime"></span></p>
+    </div>
+    
+    <button id="markAttendanceBtn" class="btn btn-success btn-lg">
+        <i class="fas fa-clipboard-check"></i> Mark My Attendance
+    </button>
+    <p id="attendanceStatus" class="mt-2"></p>
+</div>
+
+<div class="mt-3">
+    <button id="backToScannerBtn" class="btn btn-secondary" style="display:none;">
+        <i class="fas fa-arrow-left"></i> Back to QR Scanner
+    </button>
+</div>
+
+<div class="mt-4">
+    <a href="{{ url_for('logout') }}" class="btn btn-danger">
+        <i class="fas fa-sign-out-alt"></i> Logout
+    </a>
+</div>
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="https://cdn.socket.io/4.7.1/socket.io.min.js"></script>
+
+<script>
+// Initialize Socket.IO connection
+const socket = io();
+
+let currentQRData = null;
+let isFaceVerified = false;
+let scannerStream = null;
+let faceStream = null;
+
+// Socket connection handlers
+socket.on('connect', () => {
+    console.log('✅ Student socket connected:', socket.id);
+});
+
+socket.on('disconnect', () => {
+    console.log('❌ Student socket disconnected');
+});
+
+socket.on('connect_error', (err) => {
+    console.error('⚠️ Student socket connect_error:', err);
+});
+
+// Listen for attendance confirmation from server
+socket.on('attendance_confirmed', (data) => {
+    console.log('✅ Attendance confirmed by server:', data);
+    attendanceStatus.innerHTML = '<span class="text-success"><i class="fas fa-check-circle"></i> Attendance recorded successfully! ✅</span>';
+});
+
+// DOM Elements
+const qrScannerSection = document.getElementById('qrScannerSection');
+const faceVerificationSection = document.getElementById('faceVerificationSection');
+const markAttendanceSection = document.getElementById('markAttendanceSection');
+const scanStatus = document.getElementById('scanStatus');
+const verificationStatus = document.getElementById('verificationStatus');
+const attendanceStatus = document.getElementById('attendanceStatus');
+const markAttendanceBtn = document.getElementById('markAttendanceBtn');
+const attendanceSubject = document.getElementById('attendanceSubject');
+const facultyRegId = document.getElementById('facultyRegId');
+const attendanceTime = document.getElementById('attendanceTime');
+const captureFaceBtn = document.getElementById('captureFaceBtn');
+const retryFaceBtn = document.getElementById('retryFaceBtn');
+const backToScannerBtn = document.getElementById('backToScannerBtn');
+const capturedImage = document.getElementById('capturedImage');
+
+// Video & Canvas
+const scannerVideo = document.getElementById('scannerVideo');
+const faceVideo = document.getElementById('faceVideo');
+const scannerCanvas = document.getElementById('scannerCanvas');
+const faceCanvas = document.getElementById('faceCanvas');
+const scannerCtx = scannerCanvas.getContext('2d');
+const faceCtx = faceCanvas.getContext('2d');
+
+// ===== Initialize QR Scanner =====
+async function initializeQRScanner() {
+    try {
+        scannerStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        scannerVideo.srcObject = scannerStream;
+        requestAnimationFrame(scanQRCode);
+        scanStatus.innerHTML = '<span class="text-info"><i class="fas fa-camera"></i> Scanning for QR codes...</span>';
+    } catch (err) {
+        scanStatus.innerHTML = '<div class="alert alert-danger"><strong>Camera access denied</strong></div>';
+        console.error('Camera error:', err);
+    }
+}
+
+// ===== Scan QR Code =====
+function scanQRCode() {
+    if (scannerVideo.readyState === scannerVideo.HAVE_ENOUGH_DATA && !currentQRData) {
+        scannerCanvas.width = scannerVideo.videoWidth;
+        scannerCanvas.height = scannerVideo.videoHeight;
+        scannerCtx.drawImage(scannerVideo, 0, 0, scannerCanvas.width, scannerCanvas.height);
+
+        const imageData = scannerCtx.getImageData(0, 0, scannerCanvas.width, scannerCanvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, { inversionAttempts: "dontInvert" });
+
+        if (code) {
+            try {
+                const data = JSON.parse(code.data);
+                if (data.faculty_reg_id && data.subject) {
+                    currentQRData = data;
+                    console.log('📱 QR Code scanned:', currentQRData);
+                    scanStatus.innerHTML = `
+                        <div class="alert alert-success">
+                            <strong>✅ QR Detected!</strong><br>
+                            Subject: ${data.subject}<br>
+                            Faculty ID: ${data.faculty_reg_id}<br>
+                            <small>Switching to face verification...</small>
+                        </div>`;
+                    setTimeout(() => switchToFaceVerification(), 1500);
+                }
+            } catch (err) {
+                scanStatus.innerHTML = '<span class="text-danger">❌ Invalid QR Code</span>';
+                console.error('QR parse error:', err);
+            }
+        }
+    }
+    requestAnimationFrame(scanQRCode);
+}
+
+// ===== Switch to Face Verification =====
+async function switchToFaceVerification() {
+    if (scannerStream) scannerStream.getTracks().forEach(track => track.stop());
+    qrScannerSection.style.display = 'none';
+    faceVerificationSection.style.display = 'block';
+    backToScannerBtn.style.display = 'block';
+    await initializeFaceVerification();
+}
+
+// ===== Initialize Face Camera =====
+async function initializeFaceVerification() {
+    try {
+        faceStream = await navigator.mediaDevices.getUserMedia({ video: { width: 300, height: 300, facingMode: "user" } });
+        faceVideo.srcObject = faceStream;
+        verificationStatus.innerHTML = '<div class="alert alert-info"><i class="fas fa-camera"></i> Camera Ready. Position your face and capture.</div>';
+    } catch (err) {
+        verificationStatus.innerHTML = '<div class="alert alert-danger">❌ Cannot access camera</div>';
+        console.error('Face camera error:', err);
+    }
+}
+
+// ===== Capture & Verify Face =====
+captureFaceBtn.addEventListener('click', async () => {
+    faceCanvas.width = faceVideo.videoWidth;
+    faceCanvas.height = faceVideo.videoHeight;
+    faceCtx.drawImage(faceVideo, 0, 0, faceCanvas.width, faceCanvas.height);
+    const faceImageData = faceCanvas.toDataURL('image/jpeg', 0.8);
+
+    capturedImage.innerHTML = `<img src="${faceImageData}" width="150" class="img-thumbnail mt-1">`;
+    verificationStatus.innerHTML = '<div class="alert alert-warning"><i class="fas fa-spinner fa-spin"></i> Verifying your face...</div>';
+    captureFaceBtn.disabled = true;
+
+    try {
+        const response = await fetch('/verify_face_for_attendance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ face_image: faceImageData, student_reg_id: "{{ user.reg_id }}" })
+        });
+        const result = await response.json();
+        if (result.success) {
+            isFaceVerified = true;
+            verificationStatus.innerHTML = '<div class="alert alert-success"><i class="fas fa-check-circle"></i> Face Verified Successfully! ✅</div>';
+            showMarkAttendanceSection();
+        } else {
+            verificationStatus.innerHTML = `<div class="alert alert-danger"><i class="fas fa-times-circle"></i> ${result.error || 'Face verification failed. Please try again.'}</div>`;
+            retryFaceBtn.style.display = 'inline-block';
+            captureFaceBtn.disabled = false;
+        }
+    } catch (err) {
+        verificationStatus.innerHTML = '<div class="alert alert-danger"><i class="fas fa-exclamation-triangle"></i> Verification error. Please try again.</div>';
+        retryFaceBtn.style.display = 'inline-block';
+        captureFaceBtn.disabled = false;
+        console.error('Face verification error:', err);
+    }
+});
+
+// ===== Retry Capture =====
+retryFaceBtn.addEventListener('click', () => {
+    capturedImage.innerHTML = '';
+    retryFaceBtn.style.display = 'none';
+    captureFaceBtn.disabled = false;
+    verificationStatus.innerHTML = '<div class="alert alert-info"><i class="fas fa-redo"></i> Try capturing again</div>';
+});
+
+// ===== Show Attendance Section =====
+function showMarkAttendanceSection() {
+    faceVerificationSection.style.display = 'none';
+    markAttendanceSection.style.display = 'block';
+    attendanceSubject.textContent = currentQRData.subject;
+    facultyRegId.textContent = currentQRData.faculty_reg_id;
+    attendanceTime.textContent = new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'});
+    if (faceStream) faceStream.getTracks().forEach(track => track.stop());
+}
+
+// ===== Mark Attendance =====
+markAttendanceBtn.addEventListener('click', async () => {
+    if (!isFaceVerified || !currentQRData) {
+        attendanceStatus.innerHTML = '<span class="text-danger">❌ Please complete face verification first</span>';
+        return;
+    }
+
+    const attendanceData = {
+        student_reg_id: "{{ user.reg_id }}",
+        student_name: "{{ user.name }}",
+        faculty_reg_id: currentQRData.faculty_reg_id,
+        subject: currentQRData.subject,
+        timestamp: new Date().toLocaleString('en-IN', {timeZone: 'Asia/Kolkata'})
+    };
+
+    console.log('📤 Emitting attendance data:', attendanceData);
+    
+    attendanceStatus.innerHTML = '<span class="text-info"><i class="fas fa-spinner fa-spin"></i> Marking attendance...</span>';
+    markAttendanceBtn.disabled = true;
+
+    try {
+        // Emit attendance event to server
+        socket.emit('attendance', attendanceData);
+        console.log('✅ Attendance event sent to server');
+
+        // Show success message after a short delay
+        setTimeout(() => {
+            attendanceStatus.innerHTML = '<span class="text-success"><i class="fas fa-check-circle"></i> Attendance marked successfully! ✅</span>';
+        }, 800);
+
+        // Reset after 3 seconds
+        setTimeout(resetToQRScanner, 3500);
+    } catch (err) {
+        console.error('❌ Error marking attendance:', err);
+        attendanceStatus.innerHTML = '<span class="text-danger"><i class="fas fa-times-circle"></i> Error marking attendance. Please try again.</span>';
+        markAttendanceBtn.disabled = false;
+    }
+});
+
+// ===== Reset Scanner =====
+function resetToQRScanner() {
+    currentQRData = null;
+    isFaceVerified = false;
+    qrScannerSection.style.display = 'block';
+    faceVerificationSection.style.display = 'none';
+    markAttendanceSection.style.display = 'none';
+    backToScannerBtn.style.display = 'none';
+    markAttendanceBtn.disabled = false;
+    attendanceStatus.innerHTML = '';
+    capturedImage.innerHTML = '';
+    scanStatus.innerHTML = '';
+    initializeQRScanner();
+}
+
+// ===== Back Button =====
+backToScannerBtn.addEventListener('click', () => {
+    if (faceStream) faceStream.getTracks().forEach(track => track.stop());
+    if (scannerStream) scannerStream.getTracks().forEach(track => track.stop());
+    resetToQRScanner();
+});
+
+// Start scanning on page load
+console.log('🚀 Initializing student dashboard...');
+initializeQRScanner();
+</script>
+{% endblock %}

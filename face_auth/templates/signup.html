@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% block title %}Signup{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-md-7 col-lg-6">
+    <div class="card shadow-sm">
+      <div class="card-body">
+        <h3 class="card-title mb-3">Create account</h3>
+        <form id="signupForm" method="post">
+          <div class="mb-3">
+            <label class="form-label">Role</label>
+            <select name="role" class="form-select" required>
+              <option value="">Select role</option>
+              <option value="student">Student</option>
+              <option value="faculty">Faculty</option>
+            </select>
+          </div>
+          <div class="mb-3"><label class="form-label">Name</label>
+            <input class="form-control" name="name" required>
+          </div>
+          <div class="mb-3"><label class="form-label">Register ID / Faculty ID</label>
+            <input class="form-control" name="reg_id" required>
+          </div>
+          <div class="mb-3"><label class="form-label">Email</label>
+            <input type="email" class="form-control" name="email" required>
+          </div>
+          <div class="mb-3"><label class="form-label">Password</label>
+            <input type="password" class="form-control" name="password" required>
+          </div>
+
+          <!-- Camera Section -->
+          <div class="mb-3">
+            <label class="form-label">Face Capture</label>
+            <video id="video" width="100%" autoplay></video>
+            <canvas id="canvas" style="display:none;"></canvas>
+            <button type="button" class="btn btn-secondary mt-2" id="captureBtn">Capture Face</button>
+          </div>
+
+          <!-- Hidden input for face image -->
+          <input type="hidden" name="face_image" id="face_image">
+
+          <div class="d-grid">
+            <button class="btn btn-primary">Signup</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const captureBtn = document.getElementById("captureBtn");
+const faceInput = document.getElementById("face_image");
+
+// Start webcam
+navigator.mediaDevices.getUserMedia({ video: true }).then(stream => {
+    video.srcObject = stream;
+}).catch(err => { alert("Webcam not accessible: " + err); });
+
+// Capture face button
+captureBtn.addEventListener("click", () => {
+    const context = canvas.getContext("2d");
+
+    // Resize to smaller dimensions to reduce Base64 size
+    const scale = 0.5;
+    canvas.width = video.videoWidth * scale;
+    canvas.height = video.videoHeight * scale;
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    // Convert to JPEG with 70% quality
+    const imageData = canvas.toDataURL("image/jpeg", 0.7);
+    faceInput.value = imageData;
+    alert("Face captured successfully!");
+});
+</script>
+{% endblock %}
